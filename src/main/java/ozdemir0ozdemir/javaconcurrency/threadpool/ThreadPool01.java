@@ -25,9 +25,9 @@ public class ThreadPool01 {
 
     void main() throws InterruptedException {
 
-        ThreadPool threadPool = new ThreadPool(5, 50, "MyPool");
+        ThreadPool threadPool = new ThreadPool(3, 10, "MyPool");
 
-        IntStream.range(0, 100)
+        IntStream.range(0, 10)
                         .forEach(i -> threadPool.execute(generateRunnable(i, 1000, 1000)));
 
 
@@ -39,8 +39,6 @@ public class ThreadPool01 {
         double elapsedInSeconds = (System.nanoTime() - startAt) / 1_000_000_000.0;
         System.out.println(threadPool);
         System.out.println(STR."Elapsed time: \{elapsedInSeconds} seconds");
-
-
     }
 
 
@@ -71,7 +69,7 @@ public class ThreadPool01 {
 
             this.runnableQueue = new LinkedList<>();
 
-            // TODO: Lazy Creation of threads
+            // TODO: Lazy Creation of threads for optimization
             IntStream.range(0, poolSize)
                     .forEach(i -> this.pool.add(new PoolThread(STR."PoolThread-\{i}", this)));
         }
@@ -79,24 +77,19 @@ public class ThreadPool01 {
         @Override
         public void run() {
             while (active) {
-                if (!runnableQueue.isEmpty() && runningThreadsCount < maxRunningThreads) {
+                if (this.isTaskAcceptable()) {
 
                     this.pool.stream()
                             .filter(PoolThread::isAvailable)
                             .findFirst()
-                            .ifPresent(poolThread -> {
-                                poolThread.execute(runnableQueue.remove());
-                                if (!poolThread.isAlive()) {
-                                    poolThread.start();
-                                }
-                                this.incrementRunningThreadCount();
-                            });
+                            .ifPresent(this::acceptNewTask);
 
-                } else if (runnableQueue.isEmpty() && this.shutdownRequested) {
+                } else if (this.isShutdownReady()) {
                     active = false;
                 }
                 ThreadPool.makeThreadHealthy();
             }
+
             this.pool.forEach(PoolThread::requestShutdown);
             System.out.println(STR."[ThreadPool]-[\{this.getName()}] --- Stopped");
         }
@@ -106,9 +99,13 @@ public class ThreadPool01 {
             return STR."ThreadPool { poolSize: \{poolSize}, maxRunningThread: \{maxRunningThreads}, isActive: \{active} }";
         }
 
-        synchronized void incrementRunningThreadCount() {
-            System.out.println("New task requested");
-            this.runningThreadsCount++;
+        private void acceptNewTask(PoolThread poolThread) {
+            poolThread.execute(runnableQueue.remove());
+            if (!poolThread.isAlive()) {
+                poolThread.start();
+            }
+            synchronized (this) { this.runningThreadsCount++; }
+
         }
 
         synchronized void decrementRunningThreadCount() {
@@ -119,11 +116,20 @@ public class ThreadPool01 {
             if (shutdownRequested) {
                 return;
             }
+            // FIXME: multiple threads issue
             this.runnableQueue.offer(runnable);
         }
 
         void requestShutdown() {
             this.shutdownRequested = true;
+        }
+
+        private boolean isShutdownReady() {
+            return this.runnableQueue.isEmpty() && this.shutdownRequested;
+        }
+
+        private boolean isTaskAcceptable() {
+            return !runnableQueue.isEmpty() && runningThreadsCount < maxRunningThreads;
         }
 
         static void makeThreadHealthy() {
